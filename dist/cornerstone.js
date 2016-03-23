@@ -1,4 +1,4 @@
-/*! cornerstone - v0.9.0 - 2016-02-03 | (c) 2014 Chris Hafey | https://github.com/chafey/cornerstone */
+/*! cornerstone - v0.9.0 - 2016-03-22 | (c) 2014 Chris Hafey | https://github.com/chafey/cornerstone */
 if(typeof cornerstone === 'undefined'){
     cornerstone = {
         internal : {},
@@ -1178,6 +1178,54 @@ if(typeof cornerstone === 'undefined'){
 (function (cornerstone) {
 
     "use strict";
+  
+    function storedOverlayPixelDataToCanvasImageData(image, lut, canvasImageDataData)
+    {
+        var minPixelValue = image.minPixelValue;
+        var canvasImageDataIndex = 0;
+        var storedPixelDataIndex = 0;
+        var numPixels = image.width * image.height * 4;
+        var storedPixelData = image.getPixelData();
+        var localLut = lut;
+        var localCanvasImageDataData = canvasImageDataData;
+        // NOTE: As of Nov 2014, most javascript engines have lower performance when indexing negative indexes.
+        // We have a special code path for this case that improves performance.  Thanks to @jpambrun for this enhancement
+        if(minPixelValue < 0){
+            while(storedPixelDataIndex < numPixels) {
+                localCanvasImageDataData[canvasImageDataIndex++] = localLut[storedPixelData[storedPixelDataIndex++] + (-minPixelValue)]; // red
+                localCanvasImageDataData[canvasImageDataIndex++] = localLut[storedPixelData[storedPixelDataIndex++] + (-minPixelValue)]; // green
+                localCanvasImageDataData[canvasImageDataIndex] = localLut[storedPixelData[storedPixelDataIndex] + (-minPixelValue)]; // blue
+                storedPixelDataIndex+=2;
+                canvasImageDataIndex+=2;
+            }
+        }else{
+            while(storedPixelDataIndex < numPixels) {
+                localCanvasImageDataData[canvasImageDataIndex++] = localLut[storedPixelData[storedPixelDataIndex++]]; // red
+                localCanvasImageDataData[canvasImageDataIndex++] = localLut[storedPixelData[storedPixelDataIndex++]]; // green
+                localCanvasImageDataData[canvasImageDataIndex++] = localLut[storedPixelData[storedPixelDataIndex++]]; // blue
+              if (storedPixelData[storedPixelDataIndex-1]==0) {
+                localCanvasImageDataData[canvasImageDataIndex] = 255;
+              }
+              else {
+                localCanvasImageDataData[canvasImageDataIndex] = 0;
+              }
+              storedPixelDataIndex++;
+              canvasImageDataIndex++;
+            }
+        }
+    }
+
+    // Module exports
+    cornerstone.internal.storedOverlayPixelDataToCanvasImageData = storedOverlayPixelDataToCanvasImageData;
+    cornerstone.storedOverlayPixelDataToCanvasImageData = storedOverlayPixelDataToCanvasImageData;
+
+}(cornerstone));
+/**
+ * This module contains a function to convert stored pixel values to display pixel values using a LUT
+ */
+(function (cornerstone) {
+
+    "use strict";
 
     /**
      * This function transforms stored pixel values into a canvas image data buffer
@@ -1558,7 +1606,7 @@ if(typeof cornerstone === 'undefined'){
         return false;
     }
 
-    function getRenderCanvas(enabledElement, image, invalidated)
+    function getRenderCanvas(enabledElement, image, invalidated, overlay)
     {
 
         // The ww/wc is identity and not inverted - get a canvas with the image rendered into it for
@@ -1573,8 +1621,10 @@ if(typeof cornerstone === 'undefined'){
             return image.getCanvas();
         }
 
-        // apply the lut to the stored pixel data onto the render canvas
-        if(doesImageNeedToBeRendered(enabledElement, image) === false && invalidated !== true) {
+        // Return old image if nothing was changed.
+        // This is never true for overlays as there can be new things be drawn
+        if(doesImageNeedToBeRendered(enabledElement, image) === false && invalidated !== true 
+          && overlay === 'undefined') {
             return colorRenderCanvas;
         }
 
@@ -1590,7 +1640,12 @@ if(typeof cornerstone === 'undefined'){
 
         // the color image voi/invert has been modified - apply the lut to the underlying
         // pixel data and put it into the renderCanvas
+      if (overlay === 'undefined') {
         cornerstone.storedColorPixelDataToCanvasImageData(image, colorLut, colorRenderCanvasData.data);
+      }
+      else {
+        cornerstone.storedOverlayPixelDataToCanvasImageData(image, colorLut, colorRenderCanvasData.data);
+      }
         colorRenderCanvasContext.putImageData(colorRenderCanvasData, 0, 0);
         return colorRenderCanvas;
     }
@@ -1600,7 +1655,7 @@ if(typeof cornerstone === 'undefined'){
      * @param enabledElement
      * @param invalidated - true if pixel data has been invaldiated and cached rendering should not be used
      */
-    function renderColorImage(enabledElement, invalidated) {
+    function renderColorImage(enabledElement, invalidated, overlay) {
 
         if(enabledElement === undefined) {
             throw "drawImage: enabledElement parameter must not be undefined";
@@ -1615,8 +1670,13 @@ if(typeof cornerstone === 'undefined'){
         context.setTransform(1, 0, 0, 1, 0, 0);
 
         // clear the canvas
+      if (overlay === 'undefined') {
         context.fillStyle = 'black';
         context.fillRect(0,0, enabledElement.canvas.width, enabledElement.canvas.height);
+      }
+      else {
+        context.clearRect(0, 0, enabledElement.canvas.width, enabledElement.canvas.height);
+      }
 
         // turn off image smooth/interpolation if pixelReplication is set in the viewport
         if(enabledElement.viewport.pixelReplication === true) {
@@ -1631,8 +1691,14 @@ if(typeof cornerstone === 'undefined'){
         // save the canvas context state and apply the viewport properties
         context.save();
         cornerstone.setToPixelCoordinateSystem(enabledElement, context);
-
+      
+      if (overlay === 'undefined') {
         var renderCanvas = getRenderCanvas(enabledElement, image, invalidated);
+      }
+      else
+      {
+        var renderCanvas = getRenderCanvas(enabledElement, image, invalidated, true);
+      }
 
         context.drawImage(renderCanvas, 0,0, image.width, image.height, 0, 0, image.width, image.height);
 
@@ -1646,10 +1712,21 @@ if(typeof cornerstone === 'undefined'){
         lastRenderedViewport.hflip = enabledElement.viewport.hflip;
         lastRenderedViewport.vflip = enabledElement.viewport.vflip;
     }
+  
+  /**
+     * API function to render a color image to an enabled element
+     * @param enabledElement
+     * @param invalidated - true if pixel data has been invaldiated and cached rendering should not be used
+     */
+    function renderOverlayImage(enabledElement, invalidated) {
+      renderColorImage(enabledElement, invalidated, true)
+    }
 
     // Module exports
     cornerstone.rendering.colorImage = renderColorImage;
     cornerstone.renderColorImage = renderColorImage;
+  cornerstone.rendering.overlayImage = renderOverlayImage;
+  cornerstone.renderOverlayImage = renderOverlayImage;
 }(cornerstone));
 
 /**

@@ -62,7 +62,7 @@
         return false;
     }
 
-    function getRenderCanvas(enabledElement, image, invalidated)
+    function getRenderCanvas(enabledElement, image, invalidated, overlay)
     {
 
         // The ww/wc is identity and not inverted - get a canvas with the image rendered into it for
@@ -77,8 +77,10 @@
             return image.getCanvas();
         }
 
-        // apply the lut to the stored pixel data onto the render canvas
-        if(doesImageNeedToBeRendered(enabledElement, image) === false && invalidated !== true) {
+        // Return old image if nothing was changed.
+        // This is never true for overlays as there can be new things be drawn
+        if(doesImageNeedToBeRendered(enabledElement, image) === false && invalidated !== true 
+          && overlay === 'undefined') {
             return colorRenderCanvas;
         }
 
@@ -94,7 +96,12 @@
 
         // the color image voi/invert has been modified - apply the lut to the underlying
         // pixel data and put it into the renderCanvas
+      if (overlay === 'undefined') {
         cornerstone.storedColorPixelDataToCanvasImageData(image, colorLut, colorRenderCanvasData.data);
+      }
+      else {
+        cornerstone.storedOverlayPixelDataToCanvasImageData(image, colorLut, colorRenderCanvasData.data);
+      }
         colorRenderCanvasContext.putImageData(colorRenderCanvasData, 0, 0);
         return colorRenderCanvas;
     }
@@ -104,7 +111,7 @@
      * @param enabledElement
      * @param invalidated - true if pixel data has been invaldiated and cached rendering should not be used
      */
-    function renderColorImage(enabledElement, invalidated) {
+    function renderColorImage(enabledElement, invalidated, overlay) {
 
         if(enabledElement === undefined) {
             throw "drawImage: enabledElement parameter must not be undefined";
@@ -119,8 +126,13 @@
         context.setTransform(1, 0, 0, 1, 0, 0);
 
         // clear the canvas
+      if (overlay === 'undefined') {
         context.fillStyle = 'black';
         context.fillRect(0,0, enabledElement.canvas.width, enabledElement.canvas.height);
+      }
+      else {
+        context.clearRect(0, 0, enabledElement.canvas.width, enabledElement.canvas.height);
+      }
 
         // turn off image smooth/interpolation if pixelReplication is set in the viewport
         if(enabledElement.viewport.pixelReplication === true) {
@@ -135,8 +147,14 @@
         // save the canvas context state and apply the viewport properties
         context.save();
         cornerstone.setToPixelCoordinateSystem(enabledElement, context);
-
+      
+      if (overlay === 'undefined') {
         var renderCanvas = getRenderCanvas(enabledElement, image, invalidated);
+      }
+      else
+      {
+        var renderCanvas = getRenderCanvas(enabledElement, image, invalidated, true);
+      }
 
         context.drawImage(renderCanvas, 0,0, image.width, image.height, 0, 0, image.width, image.height);
 
@@ -150,8 +168,19 @@
         lastRenderedViewport.hflip = enabledElement.viewport.hflip;
         lastRenderedViewport.vflip = enabledElement.viewport.vflip;
     }
+  
+  /**
+     * API function to render a color image to an enabled element
+     * @param enabledElement
+     * @param invalidated - true if pixel data has been invaldiated and cached rendering should not be used
+     */
+    function renderOverlayImage(enabledElement, invalidated) {
+      renderColorImage(enabledElement, invalidated, true)
+    }
 
     // Module exports
     cornerstone.rendering.colorImage = renderColorImage;
     cornerstone.renderColorImage = renderColorImage;
+  cornerstone.rendering.overlayImage = renderOverlayImage;
+  cornerstone.renderOverlayImage = renderOverlayImage;
 }(cornerstone));
